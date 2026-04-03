@@ -13,12 +13,12 @@ from kafka import KafkaProducer
 
 KAFKA_BOOTSTRAP = "localhost:9092"
 TOPIC = "taxi-trips"
-SLEEP_BETWEEN_MSGS = 0.02   # seconds — simulates a live stream
-PROGRESS_EVERY = 500
+SLEEP_BETWEEN_MSGS = 0
+PROGRESS_EVERY = 10_000
 
 
 def main():
-    parquet_files = sorted(glob.glob("data/*.parquet"))
+    parquet_files = sorted(glob.glob("data/trips/*.parquet"))
     if not parquet_files:
         print("No parquet files found in data/. Exiting.")
         sys.exit(1)
@@ -39,19 +39,18 @@ def main():
         df = pd.read_parquet(filepath)
 
         # Convert datetime columns to unix milliseconds so JSON is serialisable
-        for col in df.select_dtypes(include=["datetime64[ns]", "datetime64[us]"]).columns:
-            df[col] = df[col].astype("int64") // 1_000_000  # ns → ms
+        for col in df.select_dtypes(include=["datetime64"]).columns:
+            df[col] = df[col].astype("int64") // 1_000_000  # us → s
 
         print(f"  Rows in file: {len(df):,}")
 
-        for _, row in df.iterrows():
-            producer.send(TOPIC, value=row.to_dict())
+        records = df.to_dict(orient="records")
+        for record in records:
+            producer.send(TOPIC, value=record)
             total_sent += 1
 
             if total_sent % PROGRESS_EVERY == 0:
                 print(f"  [{filepath}] Messages sent: {total_sent:,}")
-
-            time.sleep(SLEEP_BETWEEN_MSGS)
 
     producer.flush()
     print(f"\nDone. Total messages sent: {total_sent:,}")

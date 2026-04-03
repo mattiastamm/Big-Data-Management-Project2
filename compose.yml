@@ -33,7 +33,6 @@ services:
     volumes:
       - minio-data:/data
 
-  # Creates the warehouse bucket on first start
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -46,16 +45,47 @@ services:
         echo 'Bucket ready.';
       "
 
-  spark:
-    image: bitnami/spark:3.5
-    environment:
-      SPARK_MODE: master
-    ports:
-      - "8080:8080"
-      - "7077:7077"
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - kafka
+    entrypoint: >
+      /bin/sh -c "
+        sleep 10;
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic taxi-trips --partitions 1 --replication-factor 1;
+        echo 'Topic taxi-trips ready.';
+      "
+
+  bronze:
+    build: .
+    depends_on:
+      - kafka-init
+      - minio
     volumes:
-      - ./streaming:/opt/streaming
-      - ./checkpoints:/opt/checkpoints
+      - ./src:/opt/app/src
+      - ./data:/opt/app/data
+      - ./checkpoints:/opt/app/checkpoints
+    command: python src/streaming/bronze.py
+
+  silver:
+    build: .
+    depends_on:
+      - bronze
+    volumes:
+      - ./src:/opt/app/src
+      - ./data:/opt/app/data
+      - ./checkpoints:/opt/app/checkpoints
+    command: python src/streaming/silver.py
+
+  gold:
+    build: .
+    depends_on:
+      - silver
+    volumes:
+      - ./src:/opt/app/src
+      - ./data:/opt/app/data
+      - ./checkpoints:/opt/app/checkpoints
+    command: python src/streaming/gold.py
 
 volumes:
   minio-data:

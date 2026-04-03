@@ -9,15 +9,13 @@ from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import (
     StructType, StructField,
-    LongType, DoubleType, IntegerType, StringType,
+    LongType, DoubleType, StringType,
 )
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-S3_ENDPOINT       = "http://minio:9000"
-S3_BUCKET         = "s3a://warehouse"
-KAFKA_BOOTSTRAP   = "kafka:29092"   # internal Docker network address
+KAFKA_BOOTSTRAP   = "kafka:29092"
 KAFKA_TOPIC       = "taxi-trips"
 CHECKPOINT_DIR    = "./checkpoints/bronze"
 TABLE             = "lakehouse.taxi.bronze"
@@ -27,8 +25,8 @@ TABLE             = "lakehouse.taxi.bronze"
 # ---------------------------------------------------------------------------
 TAXI_SCHEMA = StructType([
     StructField("VendorID",               LongType(),   True),
-    StructField("tpep_pickup_datetime",   LongType(),   True),   # unix ms
-    StructField("tpep_dropoff_datetime",  LongType(),   True),   # unix ms
+    StructField("tpep_pickup_datetime",   LongType(),   True),
+    StructField("tpep_dropoff_datetime",  LongType(),   True),
     StructField("passenger_count",        DoubleType(), True),
     StructField("trip_distance",          DoubleType(), True),
     StructField("RatecodeID",             DoubleType(), True),
@@ -49,31 +47,10 @@ TAXI_SCHEMA = StructType([
 ])
 
 # ---------------------------------------------------------------------------
-# SparkSession
+# SparkSession — all config comes from spark-defaults.conf
 # ---------------------------------------------------------------------------
 print("Building SparkSession ...")
-spark = (
-    SparkSession.builder
-    .appName("bronze_taxi")
-    .master("local[*]")
-    .config("spark.sql.shuffle.partitions", "4")
-    .config("spark.hadoop.fs.s3a.endpoint", S3_ENDPOINT)
-    .config("spark.hadoop.fs.s3a.access.key", "admin")
-    .config("spark.hadoop.fs.s3a.secret.key", "password")
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-    .config("spark.sql.extensions",
-            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-    .config("spark.sql.catalog.lakehouse",
-            "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.lakehouse.type", "hadoop")
-    .config("spark.sql.catalog.lakehouse.warehouse", S3_BUCKET)
-    .config("spark.sql.defaultCatalog", "lakehouse")
-    .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-    .getOrCreate()
-)
+spark = SparkSession.builder.appName("bronze_taxi").getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
 print("SparkSession ready.")
 
@@ -143,7 +120,7 @@ def write_batch(batch_df, batch_id):
     batch_df.writeTo(TABLE).append()
 
 
-print(f"Starting streaming query → {TABLE}")
+print(f"Starting streaming query -> {TABLE}")
 print(f"Checkpoint directory: {CHECKPOINT_DIR}")
 
 query = (

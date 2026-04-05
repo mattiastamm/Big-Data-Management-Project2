@@ -55,6 +55,7 @@ def process_batch(batch_df, batch_id):
     spark.sql(f"""
         CREATE OR REPLACE TABLE {GOLD_TABLE}
         USING iceberg
+        PARTITIONED BY (pickup_zone)
         AS
         SELECT pickup_zone, count(*) AS trip_count
         FROM {SILVER_TABLE}

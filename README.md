@@ -169,3 +169,68 @@ docker compose down
 - **pickup_date** — date extracted from pickup timestamp
 - **pickup_zone / dropoff_zone** — joined from taxi zone lookup table
 - **ingested_at** — timestamp of when the row was processed into silver
+
+## Medallion schema overview
+
+| Column | Bronze | Silver | Gold |
+|---|---|---|---|
+| tpep_pickup_datetime | BIGINT (Unix ms) | TIMESTAMP | — |
+| tpep_dropoff_datetime | BIGINT (Unix ms) | TIMESTAMP | — |
+| passenger_count | DOUBLE | INT | — |
+| PULocationID / DOLocationID | BIGINT | INT | — |
+| fare_amount / total_amount | DOUBLE | DOUBLE | — |
+| pickup_zone / dropoff_zone | — | STRING (enriched) | STRING |
+| trip_duration_minutes | — | DOUBLE (derived) | — |
+| pickup_date | — | DATE (derived) | — |
+| ingested_at | — | TIMESTAMP (audit) | — |
+| trip_count | — | — | BIGINT |
+
+Bronze preserves the raw Kafka payload unchanged. Silver recasts types, applies cleaning rules, deduplicates, and enriches with zone names. Gold collapses everything into a 2-column top-5 aggregation.
+
+## Gold partitioning strategy
+
+The gold table is `PARTITIONED BY (pickup_zone)`. Each of the 5 zones is stored in its own Iceberg data file, so a query filtering on one zone reads a single partition. Iceberg also records a new snapshot on every micro-batch recompute, preserving full history.
+
+## Iceberg snapshot history
+
+```python
+spark.sql("""
+    SELECT snapshot_id, committed_at, operation, summary
+    FROM lakehouse.taxi.gold.snapshots
+    ORDER BY committed_at
+""").show(truncate=False)
+```
+
+```
++-------------------+-----------------------+---------+
+|snapshot_id        |committed_at           |operation|
++-------------------+-----------------------+---------+
+|1054311666291042732|2026-04-05 10:52:38.844|overwrite|
++-------------------+-----------------------+---------+
+added-data-files=1, added-records=5, total-records=5
+```
+
+Time travel:
+```python
+spark.read.option("snapshot-id", "1054311666291042732").table("lakehouse.taxi.gold").show()
+```
+
+## Custom scenario — Top 5 pickup zones
+
+Silver enriches each trip with `pickup_zone` via a broadcast join on `taxi_zone_lookup.parquet`. Gold aggregates and keeps the top 5:
+
+```sql
+SELECT pickup_zone, count(*) AS trip_count
+FROM lakehouse.taxi.silver
+GROUP BY pickup_zone
+ORDER BY trip_count DESC
+LIMIT 5
+```
+
+| Rank | pickup_zone | trip_count |
+|------|-------------|------------|
+| 1 | Upper East Side South | 1905 |
+| 2 | Upper East Side North | 1852 |
+| 3 | Penn Station/Madison Sq West | 1331 |
+| 4 | JFK Airport | 1316 |
+| 5 | Upper West Side South | 1232 |
